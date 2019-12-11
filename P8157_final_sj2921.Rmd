@@ -1,0 +1,394 @@
+---
+title: "LDA Final Data Analysis"
+author: "Shan Jiang"
+date: "11/20/2019"
+output:
+    pdf_document: 
+      highlight: kate
+      number_sections: yes
+      toc: yes
+      toc_depth: 5
+---
+
+## Tool: Extract R code from Rmd document
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+library(ggplot2)
+library(psych) 
+library(gmodels)
+library(tidyr)
+library(lattice)
+library(timeSeries)
+library(geepack)
+library(knitr)
+```
+
+#### For extraction and Latex compile
+
+```{r}
+# purl("./P8157_final_sj2921.Rmd")
+```
+
+## Import data
+
+### H1
+
+Conduct data clean before Exploratory Data Analysis (EDA). 
+
+```{r message=FALSE, warning=FALSE}
+## Set path and read in data
+getwd()
+setwd("/Users/shan/Downloads/LDA/final Project/")
+trial.df <- read.delim("./ALCDEP.txt",sep = "",  header = T)
+colnames(trial.df) 
+```
+
+```{r}
+head(trial.df)
+dim(trial.df)
+
+trial.df = trial.df %>% 
+  janitor::clean_names() %>% 
+  dplyr::mutate_at(., vars(treatment, gender), factor)
+
+trial.df = trial.df %>% 
+  dplyr::mutate(group1 = ifelse(treatment == 1, 1, 0)) %>% 
+  dplyr::mutate(group2 = ifelse(treatment == 2, 1, 0)) %>% 
+  dplyr::mutate(group3 = ifelse(treatment == 3, 1, 0)) %>% 
+  dplyr::mutate_at(., vars(group1, group2, group3), factor)
+
+str(trial.df)
+
+```
+
+### Visualization of time change 
+```{r}
+library(ggridges)
+library(cyclical)
+library(hrbrthemes)
+ggplot(trial.long,
+       aes(x = drink,y= time,fill = drink))+
+  geom_density_ridges(
+    aes(point_color = time, point_fill = time, 
+        point_shape = time ),
+    alpha = .01, point_alpha = 0.6, 
+    jittered_points = TRUE) +
+  scale_point_color_hue(l = 40) +
+  scale_discrete_manual(aesthetics = "point_shape", values = c(21, 22, 23)) + labs(title='No. of Drinks by time for patients',
+       subtitle='classified by gender') +
+  theme(axis.title.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        strip.text.y = element_text(angle = 180, hjust = 1))
+```
+
+
+### Bin plot
+```{r}
+ggplot(trial.long,
+       aes(x = drink,y= time,point_color = drink,
+           fill = drink))+
+   geom_density_ridges_gradient(aes(fill = gender),
+        scale = 3, stat = "binline",binwidth = 1, 
+                                rel_min_height = 0.01) +
+   scale_y_discrete(
+    expand = c(0.01, 0), name = "Timepoints",
+    labels = c("Baseline", "ND30", "ND60")
+  )  +labs(fill = "Gender") +
+  scale_x_continuous(expand = c(0, 0), 
+                     name = "No. of drinks in three timepoints") +
+  scale_fill_manual(values = c("#D55E0050", "#0072B250"), labels = c( "male", "female")) +
+  scale_color_manual(values = c("#D55E00", "#0072B2"), guide = "none") +
+  scale_discrete_manual("point_color", values = c("#D55E00", "#0072B2"), guide = "none") +
+  labs(title='No. of Drinks by time for patients',
+       subtitle='classified by gender') +
+ theme_ridges(font_size = 13, grid = F) + theme_ridges(center = T)
+ 
+
+```
+
+
+
+#### 1.Segment Analysis: Profiles have equal levels  
+
+Is there evidence to suggest that the treatments differ in their effects on alcohol dependence, as reflected by the number of drinks consumed in a given 30 day period?
+
+
+The data format for `MANOVA` is slightly different than we saw in ANOVA. R needs each independent variable in its own vector of factors
+
+##### 1. Test of Assumption 
+
+1.1 Make Subcategory Test for Treatment
+
+```{r}
+group1res_nd0=lm(trial.df$nd0~ trial.df$group1)$residuals
+group2res_nd0=lm(trial.df$nd0~ trial.df$group2)$residuals
+group3res_nd0=lm(trial.df$nd0~ trial.df$group3)$residuals
+
+## Normality Tests
+shapiro.test(trial.df$nd0)
+shapiro.test(group1res_nd0)
+shapiro.test(group2res_nd0)
+shapiro.test(group3res_nd0)
+```
+
+there is evidence that the data tested are not normally distributed.
+
+1.2 For gender 
+
+```{r}
+group1res_gen=lm(trial.df$nd0~ trial.df$gender)$residuals
+
+group2res_gen=lm(trial.df$nd30~ trial.df$gender)$residuals
+group3res_gen=lm(trial.df$nd60~ trial.df$gender)$residuals
+## Normality Tests
+shapiro.test(group1res_gen)
+shapiro.test(group2res_gen)
+shapiro.test(group3res_gen)
+```
+
+1.3  Check boxplot by group 1 /Not 
+```{r}
+## Check boxplot 
+boxplot(lm(trial.df$nd30~trial.df$group1)$residuals~trial.df$group1) # For CATEGORY
+boxplot(lm(trial.df$nd60~trial.df$gender)$residuals~trial.df$gender) # For GENDER
+```
+
+1.4 check homoscedasticity
+
+```{r}
+bartlett.test(group1res_nd0~trial.df$treatment)
+bartlett.test(group2res_nd0~trial.df$gender)
+bartlett.test(group3res_nd0~trial.df$treatment)
+```
+
+MANOVA are both fairly robust to deviations from normality and homoscedasticity, especially when sample sizes are equal (which they are, in this case). Now, we can run the actual test 
+
+#### 2.Run the Hypothesis Tests
+
+```{r}
+library(profileR)
+
+mod <- pbg(trial.df[,4:6], trial.df[, 2], 
+              profile.plot = TRUE)
+print(mod)
+```
+
+The print function displays the average scores on the items for the 3 groups. It can be seen that the means of the drinking number are not quite similar between the three treatments. 
+
+```{r}
+res =summary(mod)
+resulth2 = res$`Ho: Profiles have equal levels`
+```
+
+```{r}
+library(sjPlot)
+tab_df(resulth2, 
+title = "Multivariate Test Results for Parallel Hypothesis", #always give
+#your tables
+#titles
+file = "./h1_res.doc")
+```
+
+
+* The output shows that assuming $\alpha$ = .05, all three hypotheses  were rejected. 
+
+* The first `Profiles are parallel` is also rejected, the results suggest that the profiles of three groups are not parallel in drinking level changes.
+
+
+### H2 parallel
+
+**H0**: The profiles in the three groups are parallel.
+
+```{r}
+resulth22 = res$`Ho: Profiles are parallel`
+
+tab_df(resulth22, 
+title = "Multivariate Test Results for Equal-level Hypothesis", #always give
+file = "./h2_res3.doc")
+```
+
+Not coincidental.
+
+### H3 Gender 
+
+```{r}
+## Pearson Chi-Squared statistic
+chisq.test(table(trial.df$relapse,trial.df$gender))
+```
+
+```{r}
+trial.long = gather(trial.df, time, drink, nd0:nd60) %>% 
+  dplyr::select(-c(group1)) %>% 
+  dplyr::mutate_at(., vars(treatment, gender, group2, group3, time), factor) %>% 
+  dplyr::arrange(sid) ## Sort the obs before modelling
+
+# Load the dataset
+head(trial.long)
+str(trial.long)
+```
+
+##### 1.1 -2.1 Model with only interaction (time by group)
+
+```{r}
+mf1 = drink ~ time + treatment +
+              time * treatment 
+              
+
+model1  <- geeglm(mf1, 
+                id=sid, 
+                family= "poisson",
+                corstr="ar1", 
+                data=trial.long)
+
+res1 = summary(model1)
+
+
+tab_model(model1 , 
+       digits = 2,
+       title = "GEE model with time and treatment interaction effects", file = "./h1_model.doc")
+
+broom::tidy(model1)
+```
+
+
+##### 3.1 Independence 
+
+```{r}
+mf = drink ~ time + treatment +
+              time * treatment + gender +
+             gender * treatment
+
+m_ind <- geeglm(mf, 
+                id=sid, 
+                family= poisson(link = "log"),
+                corstr="independence", 
+                data= trial.long)
+summary(m_ind)
+```
+
+
+##### 3.2 Autoregression 1
+
+```{r}
+m_ar1 <- geeglm(mf, 
+                id=sid, 
+                family= poisson(link = "log"),
+                corstr="ar1", 
+                data=trial.long)
+summary(m_ar1)
+
+```
+
+##### 3.3  exchangeable
+
+```{r}
+m_exc <- geeglm(mf, 
+                id=sid, 
+                family= poisson(link = "log"),
+                corstr="exchangeable", 
+                data=trial.long)
+summary(m_exc)
+```
+
+##### 3.4  unstructured
+
+```{r}
+m_uns <- geeglm(mf,
+                id=sid, 
+                family = poisson(link = "log"),
+                corstr ="unstructured", 
+                data=trial.long)
+summary(m_uns)
+```
+
+
+```{r}
+summary(m_ar1)
+
+m_ar2 <- geeglm(drink ~ time + gender + group1 + group2, 
+                id=sid, 
+                family= poisson(link = "log"),
+                corstr="ar1", 
+                data=trial.long)
+summary(m_ar2)
+
+## tab results in the docx.
+broom::tidy(m_ar1, file = "./h3_ar1_compare_model.doc")
+
+tab_dfs(m_ar1,
+        m_ind,
+        m_exc, 
+        file = "./h3_res_compare_model.doc")
+
+require(lmtest)
+lrtest(m_ar2, m_ar1)
+anova(m_ar2, m_ar1)
+
+```
+
+### H4: Interaction 
+
+Select the Autoregressive structure of order 1, AR(1).
+
+```{r}
+m_ar1 <- geeglm(mf, 
+                id=sid, 
+                family= "poisson",
+                corstr="ar1", 
+                data=trial.long)
+summary(m_ar1)
+res_gee = summary(m_ar1)
+res_gee$coefficients
+```
+
+
+### H5: GLM -relapse
+```{r}
+ggplot(trial.long, aes(x = time, 
+                       y = drink)) +
+    geom_point(aes(color = treatment),
+        size = 0.5) +
+    stat_smooth(method = 'lm',
+        formula = y~x,
+        se = TRUE,
+        aes(color = time)) +
+    theme_classic()
+```
+
+```{r}
+ggplot(trial.long, aes(relapse, fill = gender))  +geom_bar(position = "fill") +
+    theme_classic()
+```
+
+```{r}
+library(broom)
+library(glmnet)
+
+mf.2.1 = relapse ~  gender + treatment  gender *  treatment 
+
+  
+m_glm1 <- glm(mf.2.1, 
+       family= binomial(link = "logit"), 
+                data= trial.long)
+
+summary(m_glm1)
+
+tab_model(m_glm1, file =  "./h6_res.doc")
+
+tidy(m_glm1)
+```
+
+```{r}
+## The residual deviance of 29.92 on 10 d.f. is not significant:
+1-pchisq(983, 936)
+
+## at the conventional five per cent level, so we have no evidence against this model.
+```
+
+```{r}
+
+```
+
+
+
+
